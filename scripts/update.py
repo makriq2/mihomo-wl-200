@@ -4,7 +4,7 @@ from urllib.request import urlopen, Request
 import time
 
 SRC = 'https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt'
-OUT = Path('data/wl-first-300.txt')
+OUT = Path('data/mobile-whitelist-mixed-200.txt')
 HEAD_COUNT = 50
 RANDOM_COUNT = 150
 SEED = 20260328
