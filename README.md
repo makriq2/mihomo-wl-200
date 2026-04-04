@@ -1,75 +1,71 @@
 # short-key-list
 
-Публичный репозиторий для серверной проверки VLESS-ключей из нескольких публичных апстримов и публикации итогового короткого списка.
+`short-key-list` publishes a rotating list of `200` tested VLESS keys collected from public upstream sources.
 
-Репозиторий хранит:
+Every update cycle the pipeline:
 
-- код проверки ключей через `xray` и реальный HTTP-запрос;
-- конфиг деплоя для `systemd`;
-- публикуемый итоговый файл `data/short-key-list.txt`.
+- aggregates keys from several public lists;
+- removes duplicates;
+- validates candidates through a real `xray` outbound;
+- sends a live request to `https://www.gstatic.com/generate_204`;
+- keeps per-key historical ratings across runs;
+- publishes a final list of `200` working keys chosen from the successful set.
 
-Секреты и серверное состояние не коммитятся:
+The current public output lives here:
 
-- `.env` хранится только на сервере;
-- `state/key-ratings.json` остается локальным;
-- push-доступ к GitHub должен жить вне репозитория через `gh auth`, `.netrc` или другой системный credential helper.
+- `data/short-key-list.txt`
 
-## Что делает пайплайн
+## What makes this list different
 
-- собирает единый пул ключей из трех публичных источников;
-- удаляет дубликаты;
-- поднимает временный outbound через `xray` для каждого кандидата;
-- проверяет прохождение реального запроса к `https://www.gstatic.com/generate_204`;
-- ведет рейтинг стабильности ключей между циклами;
-- публикует итоговый список в `data/short-key-list.txt`.
+This repository does not mirror raw upstream dumps.
 
-## Структура
+It tries to keep the published list usable by checking keys at publish time and by giving more weight to keys that have a better success history. The result is still dynamic, but it is not random noise:
 
-- `scripts/check_key_list.py` — основной валидатор.
-- `scripts/run_pipeline.py` — единая точка входа для проверки и публикации.
-- `scripts/publish_key_list.py` — публикация результата в целевой git-репозиторий.
-- `deploy/systemd/short-key-list.service` — unit для запуска пайплайна.
-- `deploy/systemd/short-key-list.timer` — таймер для периодического запуска.
-- `data/short-key-list.txt` — публикуемый итоговый список.
-- `artifacts/short-key-list.txt` — локальный артефакт после проверки.
-- `artifacts/check-report.json` — локальный отчет по последнему прогону.
-- `state/key-ratings.json` — локальная история рейтингов на сервере.
+- dead or obviously broken entries are filtered out;
+- duplicate keys are removed before validation;
+- keys with stronger recent history are more likely to stay in the final `200`;
+- unstable keys can still appear, but much less often than consistently healthy ones.
 
-## Источники по умолчанию
+## Validation model
+
+For each candidate key the checker:
+
+1. parses the VLESS link;
+2. optionally performs a cheap TCP precheck;
+3. starts a temporary local `xray` config for that key;
+4. sends a real HTTP request through the proxy;
+5. records the result in a persistent rating file;
+6. rebuilds the final public list from the keys that passed.
+
+The goal is practical filtering, not a guarantee that a key will stay alive forever after publication.
+
+## Upstream sources
+
+Default sources:
 
 - `https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt`
 - `https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt`
 - `https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt`
 
-## Локальный запуск
+## Repository layout
+
+- `data/short-key-list.txt` — published public list.
+- `scripts/check_key_list.py` — validator and rating-aware selector.
+- `scripts/run_pipeline.py` — end-to-end runner.
+- `scripts/publish_key_list.py` — publish step for git updates.
+- `deploy/systemd/` — example service and timer units.
+
+## For operators
+
+This repository is public, but operational secrets are not stored in git:
+
+- `.env` stays only on the server;
+- runtime ratings stay in `state/key-ratings.json` on the server;
+- the published repository only receives the final list and code changes.
+
+Minimal local run:
 
 ```bash
 cp .env.example .env
 python3 scripts/run_pipeline.py
-```
-
-Для ручной публикации после проверки:
-
-```bash
-python3 scripts/publish_key_list.py \
-  --source artifacts/short-key-list.txt \
-  --target-repo . \
-  --target-file data/short-key-list.txt \
-  --push
-```
-
-## Развертывание на сервере
-
-Рекомендуемая схема после объединения: один git-клон публичного репозитория, без отдельного постоянного publish-клона.
-
-1. Установить `python3`, `curl`, `git`, `xray`.
-2. Склонировать публичный репозиторий.
-3. Создать `.env` из `.env.example`.
-4. Настроить системный доступ на push без хранения токена в репозитории.
-5. Установить unit-файлы из `deploy/systemd/`.
-6. Включить таймер:
-
-```bash
-systemctl daemon-reload
-systemctl enable --now short-key-list.timer
 ```
